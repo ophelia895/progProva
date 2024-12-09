@@ -167,6 +167,7 @@ impl MyApp {
         // Cloniamo MyApp e lo condividiamo con il thread
         // Avvia un thread di ricezione video
         let  ipaddr= self.ip_address.clone();
+        println!("L'indirizzo Ip inserito è:{}", ipaddr);
         thread::spawn(move||{
             // Otteniamo una copia di Arc<Mutex<MyApp>>
             // let  appl = app.lock().unwrap();
