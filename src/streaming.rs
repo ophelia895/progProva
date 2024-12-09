@@ -84,7 +84,7 @@ pub mod streaming {
             .name("udpsink")
             .build()
             .expect("Elemento 'udpsink' non trovato");
-        udpsink.set_property("host", &"127.0.0.1");
+        udpsink.set_property("host", &"172.22.16.239");
         udpsink.set_property("port", &50496i32);
 
         let autovideosink = gst::ElementFactory::make("autovideosink")
