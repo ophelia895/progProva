@@ -2,34 +2,44 @@ pub mod streaming {
     use gstreamer as gst;
     use gstreamer::prelude::*;
     use std::error::Error;
-    use std::net::{TcpListener, TcpStream};
+    use std::net::IpAddr;
     use std::sync::{Arc, Mutex};
     use std::thread;
-    use egui::Context;
-    use crate::MyApp;
+    use if_addrs::get_if_addrs;
 
-    fn handle_connection(stream: TcpStream, pipeline: Arc<Mutex<gst::Pipeline>>) -> Result<(), Box<dyn Error>> {
-        let receiver_ip = stream.peer_addr()?.ip().to_string();
-        println!("Nuova connessione da: {}", receiver_ip);
+    /// Funzione per ottenere l'indirizzo IP dell'interfaccia Wi-Fi
+    fn get_wifi_ip() -> Option<IpAddr> {
+        if let Ok(if_addrs) = get_if_addrs() {
+            for iface in if_addrs {
+                println!("Interfaccia: {}", iface.name);
+                println!("IP: {:?}", iface.ip());
+                println!("Is loopback: {}", iface.ip().is_loopback());
+                println!("Is IPv4: {}", iface.ip().is_ipv4());
 
-        {
-            let pipeline_locked = pipeline.lock().unwrap();
-            if let Some(sink) = pipeline_locked.by_name("udpsink") {
-                // Pausa temporanea della pipeline
-                pipeline_locked.set_state(gst::State::Paused)?;
-
-                // Aggiorna l'indirizzo del sink
-                sink.set_property("host", &receiver_ip);
-
-                // Riprendi la pipeline
-                pipeline_locked.set_state(gst::State::Playing)?;
+                // Modifica il criterio per scegliere la Wi-Fi
+                if iface.ip().is_ipv4() && !iface.ip().is_loopback() {
+                    // Puoi aggiungere altri controlli, come verificare la sottorete
+                    return Some(iface.ip());
+                }
             }
         }
-        Ok(())
+        None
     }
 
-    pub fn start_streaming(ctx: &Context, app: &mut MyApp) -> Result<(), Box<dyn Error>> {
+
+
+    pub fn start_streaming() -> Result<(), Box<dyn Error>> {
         gst::init()?; // Inizializzazione di GStreamer
+
+        // Ottieni l'indirizzo IP del Wi-Fi
+        let wifi_ip = match get_wifi_ip() {
+            Some(ip) => ip.to_string(),
+            None => {
+                eprintln!("Impossibile determinare l'indirizzo IP del Wi-Fi.");
+                return Err("Impossibile determinare l'indirizzo IP del Wi-Fi.".into());
+            }
+        };
+        println!("Indirizzo IP del Wi-Fi: {}", wifi_ip);
 
         let pipeline = gst::Pipeline::new(None);
         let shared_pipeline = Arc::new(Mutex::new(pipeline));
@@ -40,13 +50,12 @@ pub mod streaming {
             .build()
             .expect("Elemento 'videotestsrc' non trovato");
 
-        // Cambia direttamente a un formato che sia compatibile con il resto della pipeline
         let capsfilter_src = gst::ElementFactory::make("capsfilter")
             .name("capsfilter_src")
             .build()
             .expect("Elemento 'capsfilter_src' non trovato");
         let caps_src = gst::Caps::builder("video/x-raw")
-            .field("format", &"I420_10LE") // Cambia a I420, che è supportato da x264enc
+            .field("format", &"I420_10LE")
             .field("width", &1280)
             .field("height", &720)
             .field("framerate", &gst::Fraction::new(30, 1))
@@ -63,7 +72,7 @@ pub mod streaming {
             .build()
             .expect("Elemento 'capsfilter_convert' non trovato");
         let caps_convert = gst::Caps::builder("video/x-raw")
-            .field("format", &"I420") // Assicurati di usare lo stesso formato che x264enc supporta
+            .field("format", &"I420")
             .field("width", &1280)
             .field("height", &720)
             .field("framerate", &gst::Fraction::new(30, 1))
@@ -84,21 +93,14 @@ pub mod streaming {
             .name("udpsink")
             .build()
             .expect("Elemento 'udpsink' non trovato");
-        udpsink.set_property("host", &"192.168.174.246");//TO DO fare comando che riconosce automaticamente
+        udpsink.set_property("host", &wifi_ip);
         udpsink.set_property("port", &50496i32);
 
-        let autovideosink = gst::ElementFactory::make("autovideosink")
-            .name("autovideosink")
-            .build()
-            .expect("Elemento 'autovideosink' non trovato");
-
-        // Aggiungi un tee per dividere il flusso
         let tee = gst::ElementFactory::make("tee")
             .name("tee")
             .build()
             .expect("Elemento 'tee' non trovato");
 
-        // Aggiungi gli elementi alla pipeline
         {
             let mut pipeline_locked = shared_pipeline.lock().unwrap();
             pipeline_locked.add_many(&[
@@ -110,10 +112,8 @@ pub mod streaming {
                 &rtp_payload,
                 &tee,
                 &udpsink,
-               // &autovideosink,
             ])?;
 
-            // Collega gli elementi
             gst::Element::link_many(&[
                 &src,
                 &capsfilter_src,
@@ -124,7 +124,6 @@ pub mod streaming {
                 &tee,
             ])?;
 
-            // Collega il tee ai due rami (udpsink e autovideosink)
             let tee_src_pad_udpsink = tee
                 .request_pad_simple("src_%u")
                 .expect("Impossibile richiedere un pad al tee");
@@ -132,17 +131,8 @@ pub mod streaming {
                 .static_pad("sink")
                 .expect("Pad sink non trovato in udpsink");
             tee_src_pad_udpsink.link(&udpsink_sink_pad)?;
-
-            let tee_src_pad_videosink = tee
-                .request_pad_simple("src_%u")
-                .expect("Impossibile richiedere un pad al tee");
-           /* let autovideosink_sink_pad = autovideosink
-                .static_pad("sink")
-                .expect("Pad sink non trovato in autovideosink");
-            tee_src_pad_videosink.link(&autovideosink_sink_pad)?;*/
         }
 
-        // Avvio della pipeline
         {
             let pipeline_locked = shared_pipeline.lock().unwrap();
             match pipeline_locked.set_state(gst::State::Playing) {
@@ -154,7 +144,6 @@ pub mod streaming {
             }
         }
 
-        // Gestione del bus con log dettagliati
         let bus_pipeline = Arc::clone(&shared_pipeline);
         thread::spawn(move || {
             let pipeline_locked = bus_pipeline.lock().unwrap();
@@ -165,21 +154,21 @@ pub mod streaming {
                     MessageView::Eos(..) => {
                         println!("Fine dello stream.");
                         let mut pipeline_locked = bus_pipeline.lock().unwrap();
-                        pipeline_locked.set_state(gst::State::Null).expect("Impossibile impostare la pipeline su NULL.");
+                        pipeline_locked
+                            .set_state(gst::State::Null)
+                            .expect("Impossibile impostare la pipeline su NULL.");
                         break;
                     }
                     MessageView::Error(err) => {
                         eprintln!("Errore dalla pipeline: {}", err.error());
-                        // Log degli errori con maggiore dettaglio
                         if let Some(debug) = err.debug() {
                             eprintln!("Debug: {}", debug);
                         }
                         let mut pipeline_locked = bus_pipeline.lock().unwrap();
-                        pipeline_locked.set_state(gst::State::Null).expect("Impossibile impostare la pipeline su NULL.");
+                        pipeline_locked
+                            .set_state(gst::State::Null)
+                            .expect("Impossibile impostare la pipeline su NULL.");
                         break;
-                    }
-                    MessageView::Warning(warn) => {
-                        eprintln!("Avviso: {}", warn.error());
                     }
                     _ => (),
                 }
