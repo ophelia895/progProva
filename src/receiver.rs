@@ -13,8 +13,9 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
     // Inizializzazione di GStreamer
     gst::init()?;
 
+    let ipaddr2="127.22.16.239";
     // Creazione dell'indirizzo completo del server
-    let server_address = format!("{}:50496", ipaddr);
+    let server_address = format!("{}:50496", ipaddr2);
     println!("Indirizzo server {}", server_address);
 
     // Creazione del socket UDP
