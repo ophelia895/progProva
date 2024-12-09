@@ -27,7 +27,7 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
     let src = gst::ElementFactory::make("udpsrc")
         .name("src")
         .build()
-        .expect("Elemento 'udpsrc' non trovato");
+        .expect("Elemento 'udpsrc' non trovato");;
 
     // Imposta la porta (tipo i32)
     src.set_property("port", &50496i32);
