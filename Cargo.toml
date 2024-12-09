@@ -1,0 +1,22 @@
+[package]
+name = "progProva"
+version = "0.1.0"
+edition = "2021"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[dependencies]
+
+time = "0.3.36"
+xcap = "0.0.13"
+egui = "0.29.1"
+eframe = "0.29.1"
+image = "0.25.2"
+gstreamer = "0.20"
+gstreamer-video = { version = "0.20", features = ["v1_20"] }
+gstreamer-app = "0.20"
+gstreamer-net = "0.23.2"
+anyhow = "1.0.91"
+derive_more = { version = "1.0", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
