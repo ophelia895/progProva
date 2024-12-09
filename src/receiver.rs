@@ -1,12 +1,11 @@
 use std::error::Error;
-use std::net::UdpSocket;
 use std::sync::mpsc;
-use std::{thread, time::Duration};
-use eframe::epaint::Color32;
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use egui::ColorImage;
 use gstreamer::glib;
+use egui::ColorImage;
+use eframe::epaint::Color32;
+
 use crate::MyApp;
 
 pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<(), Box<dyn Error>> {
@@ -15,26 +14,18 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
 
     // Creazione dell'indirizzo completo del server
     let server_address = format!("{}:50496", ipaddr);
-    println!("Indirizzo server {}", server_address);
-
-    // Creazione del socket UDP
-    let socket = UdpSocket::bind(&server_address)?;
-    println!("Receiver UDP in ascolto su {}", server_address);
+    println!("In ascolto su {}", server_address);
 
     // Creazione della pipeline GStreamer
     let pipeline = gst::Pipeline::new(None);
 
-    // Creazione dell'elemento sorgente UDP
+    // Elementi della pipeline
     let src = gst::ElementFactory::make("udpsrc")
         .name("src")
         .build()
         .expect("Elemento 'udpsrc' non trovato");
-
-    // Imposta la porta (tipo i32)
     src.set_property("port", &50496i32);
-    println!("Porta di udpsrc: {:?}", src.property::<i32>("port"));
 
-    // Creazione degli elementi per il processing del flusso video
     let rtp_depay = gst::ElementFactory::make("rtph264depay")
         .build()
         .expect("Elemento 'rtph264depay' non trovato");
@@ -43,42 +34,38 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
         .build()
         .expect("Elemento 'avdec_h264' non trovato");
 
+    let videoconvert = gst::ElementFactory::make("videoconvert")
+        .build()
+        .expect("Elemento 'videoconvert' non trovato");
+
     let appsink = gst::ElementFactory::make("appsink")
         .name("appsink")
         .build()
         .expect("Elemento 'appsink' non trovato");
-
-    // Impostazione delle proprietà di appsink
     appsink.set_property("emit-signals", &true);
     appsink.set_property("sync", &false);
 
     // Aggiunta degli elementi alla pipeline
-    pipeline.add_many(&[&src, &rtp_depay, &decoder, &appsink])?;
+    pipeline.add_many(&[&src, &rtp_depay, &decoder, &videoconvert, &appsink])?;
 
-    // Collegamento degli elementi nella pipeline
-    if let Err(err) = gst::Element::link_many(&[&src, &rtp_depay, &decoder, &appsink]) {
-        eprintln!("Errore nel collegare gli elementi: {}", err);
-        return Err("Collegamento fallito".into());
-    }
+    // Collegamento degli elementi
+    gst::Element::link_many(&[&src, &rtp_depay, &decoder, &videoconvert, &appsink])?;
 
-    // Connessione al segnale "new-sample" di appsink
+    // Gestione del segnale "new-sample" di appsink
     let appsink_clone = appsink.clone();
     appsink.connect("new-sample", false, move |_| {
-        // Estrai il sample da appsink
+        // Estrazione del sample
         if let Some(sample) = appsink_clone.property::<Option<gst::Sample>>("last-sample") {
-            // Otteniamo il buffer dal sample
             if let Some(buffer_ref) = sample.buffer() {
-                // Decodifica del buffer in ColorImage
-                if let Ok(image) = decode_buffer_to_color_image(&buffer_ref) {
-                    // Invia l'immagine al canale per il thread UI
+                // Decodifica del buffer in immagine
+                if let Ok(image) = decode_buffer_to_color_image(buffer_ref) {
                     if let Err(e) = tx.send(image) {
-                        eprintln!("Errore nell'invio dell'immagine al canale: {}", e);
+                        eprintln!("Errore nell'invio dell'immagine: {}", e);
                     }
                 }
             }
         }
-
-        // Restituisci gst::FlowReturn::Ok per indicare che il frame è stato gestito
+        // Restituisci gst::FlowReturn::Ok
         Some(glib::Value::from(gst::FlowReturn::Ok))
     });
 
@@ -92,18 +79,20 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
         }
     }
 
-    // Loop per ricevere pacchetti UDP
-    let mut buf = [0; 2048];
-    loop {
-        match socket.recv_from(&mut buf) {
-            Ok((bytes_received, src_addr)) => {
-                println!("Ricevuti {} byte da {}", bytes_received, src_addr);
-                // Processa i dati ricevuti (se necessario).
-                // In questo caso, sono passati direttamente a GStreamer tramite udpsrc.
+    // Mantieni la pipeline attiva
+    let bus = pipeline.bus().unwrap();
+    for msg in bus.iter_timed(gst::ClockTime::NONE) {
+        use gst::MessageView;
+        match msg.view() {
+            MessageView::Eos(..) => {
+                println!("Fine dello streaming.");
+                break;
             }
-            Err(e) => {
-                eprintln!("Errore nella ricezione del pacchetto: {}", e);
+            MessageView::Error(err) => {
+                eprintln!("Errore nella pipeline: {}", err.error());
+                break;
             }
+            _ => (),
         }
     }
 
@@ -113,14 +102,14 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
     Ok(())
 }
 
-// Funzione per decodificare un buffer H264 in un'immagine ColorImage
+// Funzione per decodificare un buffer in un'immagine ColorImage
 fn decode_buffer_to_color_image(buffer: &gst::BufferRef) -> Result<ColorImage, Box<dyn Error>> {
     let size = buffer.size();
-    let binding = buffer.map_readable()?;
-    let data = binding.as_slice();
+    let data = buffer.map_readable()?.as_slice();
 
-    let width = 640; // Larghezza simulata
-    let height = 480; // Altezza simulata
+    // Esempio simulato: restituisce un'immagine nera
+    let width = 640; // Simulazione: modifica in base ai tuoi dati
+    let height = 480;
     let pixels = vec![Color32::BLACK; (width * height) as usize];
 
     Ok(ColorImage {
