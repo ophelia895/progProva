@@ -89,7 +89,7 @@ pub mod ui {
                 }
             });
 
-        start_streaming();
+        start_streaming(ctx,app);
 
         video_ui(ctx, app);
     }

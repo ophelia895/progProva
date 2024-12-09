@@ -2,44 +2,48 @@ pub mod streaming {
     use gstreamer as gst;
     use gstreamer::prelude::*;
     use std::error::Error;
-    use std::net::IpAddr;
+    use std::net::{TcpListener, TcpStream};
     use std::sync::{Arc, Mutex};
     use std::thread;
+    use egui::Context;
+    use crate::MyApp;
     use if_addrs::get_if_addrs;
 
-    /// Funzione per ottenere l'indirizzo IP dell'interfaccia Wi-Fi
-    fn get_wifi_ip() -> Option<IpAddr> {
-        if let Ok(if_addrs) = get_if_addrs() {
-            for iface in if_addrs {
-                println!("Interfaccia: {}", iface.name);
-                println!("IP: {:?}", iface.ip());
-                println!("Is loopback: {}", iface.ip().is_loopback());
-                println!("Is IPv4: {}", iface.ip().is_ipv4());
-
-                // Modifica il criterio per scegliere la Wi-Fi
-                if iface.ip().is_ipv4() && !iface.ip().is_loopback() {
-                    // Puoi aggiungere altri controlli, come verificare la sottorete
-                    return Some(iface.ip());
-                }
+    // Funzione per ottenere l'indirizzo IP locale
+    fn get_local_ip() -> Result<String, Box<dyn std::error::Error>> {
+        for iface in get_if_addrs()? {
+            if iface.ip().is_ipv4() && !iface.is_loopback() {
+                return Ok(iface.ip().to_string());
             }
         }
-        None
+        Err("Nessun indirizzo IP valido trovato.".into())
     }
 
+    fn handle_connection(stream: TcpStream, pipeline: Arc<Mutex<gst::Pipeline>>) -> Result<(), Box<dyn Error>> {
+        let receiver_ip = stream.peer_addr()?.ip().to_string();
+        println!("Nuova connessione da: {}", receiver_ip);
 
+        {
+            let pipeline_locked = pipeline.lock().unwrap();
+            if let Some(sink) = pipeline_locked.by_name("udpsink") {
+                // Aggiorna dinamicamente l'IP del sink
+                sink.set_property("host", &receiver_ip);
+            }
+        }
+        Ok(())
+    }
 
-    pub fn start_streaming() -> Result<(), Box<dyn Error>> {
+    pub fn start_streaming(ctx: &Context, app: &mut MyApp) -> Result<(), Box<dyn Error>> {
         gst::init()?; // Inizializzazione di GStreamer
 
-        // Ottieni l'indirizzo IP del Wi-Fi
-        let wifi_ip = match get_wifi_ip() {
-            Some(ip) => ip.to_string(),
-            None => {
-                eprintln!("Impossibile determinare l'indirizzo IP del Wi-Fi.");
-                return Err("Impossibile determinare l'indirizzo IP del Wi-Fi.".into());
-            }
-        };
-        println!("Indirizzo IP del Wi-Fi: {}", wifi_ip);
+        // Ottieni l'indirizzo IP locale
+        let local_ip = get_local_ip()?;
+        println!("Indirizzo IP locale rilevato: {}", local_ip);
+
+        // Usa una porta dinamica
+        let listener = TcpListener::bind((local_ip.as_str(), 0))?;
+        let port = 50496;
+        println!("Server in ascolto su {}:{}", local_ip, port);
 
         let pipeline = gst::Pipeline::new(None);
         let shared_pipeline = Arc::new(Mutex::new(pipeline));
@@ -93,8 +97,8 @@ pub mod streaming {
             .name("udpsink")
             .build()
             .expect("Elemento 'udpsink' non trovato");
-        udpsink.set_property("host", &wifi_ip);
-        udpsink.set_property("port", &50496i32);
+        udpsink.set_property("host", &local_ip);
+        udpsink.set_property("port", &(port as i32));
 
         let tee = gst::ElementFactory::make("tee")
             .name("tee")
@@ -154,9 +158,7 @@ pub mod streaming {
                     MessageView::Eos(..) => {
                         println!("Fine dello stream.");
                         let mut pipeline_locked = bus_pipeline.lock().unwrap();
-                        pipeline_locked
-                            .set_state(gst::State::Null)
-                            .expect("Impossibile impostare la pipeline su NULL.");
+                        pipeline_locked.set_state(gst::State::Null).expect("Impossibile impostare la pipeline su NULL.");
                         break;
                     }
                     MessageView::Error(err) => {
@@ -165,10 +167,11 @@ pub mod streaming {
                             eprintln!("Debug: {}", debug);
                         }
                         let mut pipeline_locked = bus_pipeline.lock().unwrap();
-                        pipeline_locked
-                            .set_state(gst::State::Null)
-                            .expect("Impossibile impostare la pipeline su NULL.");
+                        pipeline_locked.set_state(gst::State::Null).expect("Impossibile impostare la pipeline su NULL.");
                         break;
+                    }
+                    MessageView::Warning(warn) => {
+                        eprintln!("Avviso: {}", warn.error());
                     }
                     _ => (),
                 }
