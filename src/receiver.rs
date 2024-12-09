@@ -15,6 +15,7 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
 
     // Creazione dell'indirizzo completo del server
     let server_address = format!("{}:50496", ipaddr);
+    println!("Indirizzo server {}", server_address);
 
     // Creazione del socket UDP
     let socket = UdpSocket::bind(&server_address)?;
