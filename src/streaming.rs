@@ -8,6 +8,9 @@ pub mod streaming {
     use egui::Context;
     use if_addrs::get_if_addrs;
     use crate::MyApp;
+    use gstreamer::prelude::*;
+    use gstreamer_video::VideoEncoder;
+
     /// Funzione per ottenere l'indirizzo IP dell'interfaccia Wi-Fi
     fn get_wifi_ip() -> Option<IpAddr> {
         if let Ok(if_addrs) = get_if_addrs() {
@@ -83,6 +86,18 @@ pub mod streaming {
             .name("encoder")
             .build()
             .expect("Elemento 'x264enc' non trovato");
+        let bitrate: u32 = 500; // esempio: 500 kbps
+        encoder.set_property("bitrate", bitrate);// Bitrate in kbps
+
+        encoder.set_property_from_str("speed-preset", "ultrafast"); // Impostazione per debug
+        let capsfilter_encoder = gst::ElementFactory::make("capsfilter")
+            .name("capsfilter_encoder")
+            .build()
+            .expect("Elemento 'capsfilter_encoder' non trovato");
+
+        let caps_encoder = gst::Caps::builder("video/x-h264").build();
+        capsfilter_encoder.set_property("caps", &caps_encoder);
+
 
         let rtp_payload = gst::ElementFactory::make("rtph264pay")
             .name("rtp_payload")
@@ -107,6 +122,7 @@ pub mod streaming {
                 &capsfilter_src,
                 &videoconvert,
                 &encoder,
+                &capsfilter_encoder,
                 &rtp_payload,
                 &udpsink,
                 &capsfilter_rtp,
@@ -117,12 +133,18 @@ pub mod streaming {
                 &capsfilter_src,
                 &videoconvert,
                 &encoder,
+                &capsfilter_encoder,
                 &rtp_payload,
                 &capsfilter_rtp,
                 &udpsink,
             ])?;
 
-
+           /* gst::debug_bin_to_dot_file_with_ts(
+                &pipeline_locked,
+                gst::DebugGraphDetails::ALL,
+                "sender-pipeline",
+            );
+*/
         }
 
         // Avvio della pipeline
