@@ -24,6 +24,7 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
         .name("src")
         .build()
         .expect("Elemento 'udpsrc' non trovato");
+    src.set_property("address",&ipaddr);
     src.set_property("port", &50496i32);
 
     let rtp_depay = gst::ElementFactory::make("rtph264depay")
@@ -55,7 +56,7 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
         .build()
         .expect("Elemento 'appsink' non trovato");
     appsink.set_property("emit-signals", &true);
-    appsink.set_property("sync", &false);
+    appsink.set_property("sync", &true);
 
     // Aggiunta degli elementi alla pipeline
     pipeline.add_many(&[&src, &capsfilter_rtp,&rtp_depay, &decoder, &videoconvert, &appsink])?;
@@ -86,6 +87,7 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
         // Restituisci gst::FlowReturn::Ok
         Some(glib::Value::from(gst::FlowReturn::Ok))
     });
+
 
 
 
