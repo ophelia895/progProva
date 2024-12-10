@@ -121,6 +121,8 @@ pub mod streaming {
                 &capsfilter_rtp,
                 &udpsink,
             ])?;
+
+
         }
 
         // Avvio della pipeline

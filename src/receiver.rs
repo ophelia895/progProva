@@ -58,7 +58,7 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
     appsink.set_property("sync", &false);
 
     // Aggiunta degli elementi alla pipeline
-    pipeline.add_many(&[&src, &rtp_depay, &decoder, &videoconvert, &appsink,&capsfilter_rtp])?;
+    pipeline.add_many(&[&src, &capsfilter_rtp,&rtp_depay, &decoder, &videoconvert, &appsink])?;
 
     // Collegamento degli elementi
     gst::Element::link_many(&[&src,&capsfilter_rtp, &rtp_depay, &decoder, &videoconvert, &appsink])?;
