@@ -124,6 +124,9 @@ struct MyApp {
     keys: Vec<(String, Key, bool)>,
     changing_keys: Option<(String, Key)>,
     ip_address: String,
+    packets_received: u64,
+    bitrate: f32,
+    last_error: Option<String>,
 
 }
 
@@ -134,7 +137,7 @@ impl MyApp {
         keys.push(("PAUSE".to_string(), Key::Space, false));
         keys.push(("HIDE".to_string(), Key::H, false));
         keys.push(("TERMINATE".to_string(), Key::Escape, false));
-        let main_menu_img = image_from_path("assets/no_signal.jpg");
+        let main_menu_img = image_from_path("C:/Users/linaa/OneDrive/Desktop/Universita/1Anno/2semestre/Programmazione di sistema/progProva/assets/no_signal.jpg");
 
         MyApp {
             texture: None,
@@ -148,7 +151,10 @@ impl MyApp {
             crop: None,
             keys,
             changing_keys: None,
-            ip_address:  String::new()
+            ip_address:  String::new(),
+            packets_received:0,
+            bitrate:0.0,
+            last_error:None
         }
     }
 
@@ -210,11 +216,17 @@ impl App for MyApp {
         //should be set outside the update function, but it does not work there :)
         ctx.set_visuals(Visuals::dark());
 
-        //load main menu image
-        if self.state == MainMenu
-            || self.keys.iter().find(|(k,_,_)| {k == "HIDE"}).unwrap().2 {
-            self.texture = Some(ctx.load_texture("image_texture", self.main_menu_img.as_ref().unwrap().clone(), TextureOptions::LINEAR));
+        // Controlla se `self.main_menu_img` è `Some` prima di usarlo
+        if let Some(main_menu_img) = self.main_menu_img.as_ref() {
+            // Se `self.main_menu_img` è `Some`, carica la texture
+            if self.state == MainMenu || self.keys.iter().any(|(k, _, _)| k == "HIDE") {
+                self.texture = Some(ctx.load_texture("image_texture", main_menu_img.clone(), TextureOptions::LINEAR));
+            }
+        } else {
+            // Gestisci il caso in cui `self.main_menu_img` è `None` (ad esempio, carica una texture di fallback)
+            eprintln!("Errore: Immagine del menu principale non disponibile!");
         }
+
 
         if self.state != MonitorSelection {
             self.monitor_preview = None;

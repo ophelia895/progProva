@@ -1,9 +1,8 @@
 pub mod ui {
     use crate::streaming::streaming::start_streaming;
-    use eframe::epaint::textures::TextureOptions;
+use eframe::epaint::textures::TextureOptions;
     use egui::{Button, Color32, ColorImage, Context, Image, ImageButton, Key, Pos2, Rect, Rounding, Stroke};
     use egui::load::SizedTexture;
-    use gstreamer::Element;
     use crate::{MouseDragHandler, MyApp, State};
     use crate::capture::capture::{get_monitors};
     use crate::State::{MainMenu, Sending};
@@ -94,32 +93,17 @@ pub mod ui {
         video_ui(ctx, app);
     }
 
-    pub fn receiver_ui(ctx: &Context, app: &mut MyApp){
-
+    pub fn receiver_ui(ctx: &Context, app: &mut MyApp) {
+        // Top panel per il titolo
         egui::TopBottomPanel::top("title")
-            .exact_height(TOP_PANEL_HEIGHT*2.0)
+            .exact_height(TOP_PANEL_HEIGHT * 2.0)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.add_space(8.0);
-                ui.heading("ESTABILISH CONNECTION");
+                ui.heading("ESTABLISH CONNECTION");
                 ui.add_space(4.0);
-                ui.heading("Specify the address of the caster it should connect to.");
+                ui.heading("Specify the address of the caster to connect to.");
             });
-
-        egui::SidePanel::left("buttons")
-            .exact_width(SIDE_PANEL_WIDTH)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                ui.visuals_mut().widgets.active.weak_bg_fill = Color32::YELLOW;
-                ui.add_space(8.0);
-                if ui.add(Button::new("MAIN MENU")).clicked() {
-                    app.state = MainMenu;
-                }
-            });
-
-        //video_ui(ctx, app);
-
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.add_space(16.0);
@@ -181,8 +165,23 @@ pub mod ui {
             });
         });
 
+        // Side panel per i bottoni
+        egui::SidePanel::left("buttons")
+            .exact_width(SIDE_PANEL_WIDTH)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                ui.visuals_mut().widgets.active.weak_bg_fill = Color32::YELLOW;
+                ui.add_space(8.0);
+                if ui.add(Button::new("MAIN MENU")).clicked() {
+                    app.state = MainMenu;
+                }
+            });
+
 
     }
+
+
 
     pub fn connetion_ui(ctx: &Context, app: &mut MyApp){
 
@@ -205,7 +204,38 @@ pub mod ui {
                     app.state = State::Receiver;
                 }
             });
+        // Central panel per la visualizzazione del video
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.add_space(16.0);
+                ui.label("Waiting for stream...");
 
+                // Aggiungi la logica per visualizzare il flusso video
+                if let Some(texture) = &app.texture {
+                    // Calcola la dimensione dell'immagine e applica la scala
+                    let tex_size = texture.size();
+                    let tex_size_f32 = (tex_size[0] as f32, tex_size[1] as f32);
+                    let available = ui.available_size();
+
+                    let scale_x = available[0] / tex_size_f32.0;
+                    let scale_y = available[1] / tex_size_f32.1;
+
+                    let scale = scale_x.min(scale_y);
+                    let scaled_size = (tex_size_f32.0 * scale, tex_size_f32.1 * scale);
+
+                    // Mostra l'immagine video
+                    ui.add_sized(scaled_size, Image::from_texture(
+                        SizedTexture::new(texture.id(), scaled_size)));
+                } else {
+                    ui.label("No video received yet");
+                }
+            });
+        });
+
+        // Avvia la ricezione del video (se non già avviato)
+        if app.texture.is_none() {
+            app.start_video_receiver(ctx);
+        }
         //video_ui(ctx, app);
        // start_receiver(app);
        // app.start_video_receiver(ctx);
