@@ -30,6 +30,18 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
         .build()
         .expect("Elemento 'rtph264depay' non trovato");
 
+    let capsfilter_rtp = gst::ElementFactory::make("capsfilter")
+        .name("capsfilter_rtp")
+        .build()
+        .expect("Elemento 'capsfilter_rtp' non trovato");
+
+    let caps_rtp = gst::Caps::builder("application/x-rtp")
+        .field("media", &"video")
+        .field("encoding-name", &"H264")
+        .field("payload", &96) // Deve corrispondere al payload type del sender
+        .build();
+    capsfilter_rtp.set_property("caps", &caps_rtp);
+
     let decoder = gst::ElementFactory::make("avdec_h264")
         .build()
         .expect("Elemento 'avdec_h264' non trovato");
@@ -46,10 +58,16 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
     appsink.set_property("sync", &false);
 
     // Aggiunta degli elementi alla pipeline
-    pipeline.add_many(&[&src, &rtp_depay, &decoder, &videoconvert, &appsink])?;
+    pipeline.add_many(&[&src, &rtp_depay, &decoder, &videoconvert, &appsink,&capsfilter_rtp])?;
 
     // Collegamento degli elementi
-    gst::Element::link_many(&[&src, &rtp_depay, &decoder, &videoconvert, &appsink])?;
+    gst::Element::link_many(&[&src,&capsfilter_rtp, &rtp_depay, &decoder, &videoconvert, &appsink])?;
+
+    gst::debug_bin_to_dot_file_with_ts(
+        &pipeline,
+        gst::DebugGraphDetails::ALL,
+        "receiver-pipeline",
+    );
 
     // Gestione del segnale "new-sample" di appsink
     let appsink_clone = appsink.clone();
@@ -68,6 +86,9 @@ pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<()
         // Restituisci gst::FlowReturn::Ok
         Some(glib::Value::from(gst::FlowReturn::Ok))
     });
+
+
+
 
     // Avvio della pipeline
     match pipeline.set_state(gst::State::Playing) {
