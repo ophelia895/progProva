@@ -61,8 +61,11 @@ pub fn start_video_receiver(ctx: egui::Context, sender: mpsc::Sender<ColorImage>
                 let format = info.format();
                 let bytes_per_pixel = match format {
                     gst_video::VideoFormat::Rgb => 3,
-                    gst_video::VideoFormat::Rgb => 4,
-                    _ => 3,
+                    gst_video::VideoFormat::Rgba => 4,
+                    _ => {
+                        eprintln!("Formato video non supportato: {:?}", format);
+                        return Err(gst::FlowError::Error);
+                    }
                 };
 
                 // Ottieni i dati del primo piano e lo stride

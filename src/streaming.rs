@@ -6,12 +6,13 @@ use gstreamer_app::gst;
 pub fn start_server() -> Result<(), Box<dyn std::error::Error>> {
     // Inizializza GStreamer
     gst::init()?;
-
-    // Creazione della pipeline GStreamer (per ridurre latenza e bitrate)
-    let pipeline = gst::parse_launch(
+    let host_ip = "192.168.216.246";  // Cambia con l'IP del server
+    let pipeline_str = format!(
         "d3d11screencapturesrc ! videoconvert ! x264enc tune=zerolatency bitrate=3000 speed-preset=ultrafast ! \
-        rtph264pay config-interval=1 pt=96 ! udpsink host=127.0.0.1 port=5000"
-    )?;
+    rtph264pay config-interval=1 pt=96 ! udpsink host={} port=5000",
+        host_ip
+    );
+    let pipeline = gst::parse_launch(&pipeline_str)?;
 
     let pipeline = pipeline
         .downcast::<gst::Pipeline>()
