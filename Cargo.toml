@@ -8,6 +8,8 @@ opt-level = 3
 
 [dependencies]
 
+gstreamer-rtsp-server = "0.21"
+glib = "0.20.7"
 time = "0.3.36"
 xcap = "0.0.13"
 egui = "0.29.1"
@@ -21,3 +23,4 @@ anyhow = "1.0.91"
 if-addrs = "0.6"
 derive_more = { version = "1.0", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
+pkg-config = "0.3.31"

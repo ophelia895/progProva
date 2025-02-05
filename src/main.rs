@@ -1,9 +1,11 @@
+
 mod capture;
 mod ui;
-mod streaming;
 mod receiver;
+mod streaming;
 
-use crate::capture::capture::{capture, crop_color_image, get_monitors, image_from_path, primary_monitor};
+use crate::ui::ui::*;
+use crate::capture::capture::*;
 use eframe::egui::{self, ColorImage, TextureHandle};
 use eframe::{App, Frame, HardwareAcceleration};
 use egui::{Key, Rect, ViewportBuilder, Visuals};
@@ -13,12 +15,14 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use eframe::emath::Pos2;
+use eframe::epaint::Color32;
 use gstreamer::Context;
+use gstreamer::glib::Cast;
+use gstreamer::prelude::{ElementExt, GstBinExt};
+use gstreamer_app::{gst, AppSink, AppSinkCallbacks};
 use xcap::Monitor;
-use crate::receiver::start_receiver;
 use crate::State::{MainMenu, MonitorSelection, PortionSelection, Receiver, Sending, KeysCustomization};
 
-use crate::ui::ui::*;
 
 const FRAMERATE: usize = 60;
 const FRAMEPERIOD: f64 = 1.0 / (FRAMERATE as f64);
@@ -32,7 +36,7 @@ enum State
     MonitorSelection,
     Sending,
     Receiver,
-    Connetion,
+    Connection,
     PortionSelection,
     KeysCustomization,
 }
@@ -109,12 +113,16 @@ fn main() -> Result<(), eframe::Error> {
         Box::new(|_cc| {
             Ok(Box::new(MyApp::new(primary_monitor().unwrap())))
         }),
+
     )
 }
 struct MyApp {
+
+    sender_channel: mpsc::Sender<ColorImage>, // Aggiunto canale per inviare frame
     texture: Option<TextureHandle>, // To store the image texture
     receiver_channel: Option<mpsc::Receiver<ColorImage>>, // Canale per ricevere immagini
     timer: Instant,
+    video_receiver_started: bool,
     state: State,
     monitor: Monitor,
     main_menu_img: Option<ColorImage>,
@@ -129,62 +137,32 @@ struct MyApp {
 
 impl MyApp {
     fn new(monitor: Monitor) -> Self {
-
+        gstreamer::debug_set_default_threshold(gstreamer::DebugLevel::Debug);
         let mut keys = Vec::new();
         keys.push(("PAUSE".to_string(), Key::Space, false));
         keys.push(("HIDE".to_string(), Key::H, false));
         keys.push(("TERMINATE".to_string(), Key::Escape, false));
         let main_menu_img = image_from_path("assets/no_signal.jpg");
+        let (tx, rx) = mpsc::channel(); // Crea il canale di comunicazione
 
         MyApp {
             texture: None,
-            receiver_channel: None,
+            video_receiver_started: false,
+            receiver_channel: Some(rx),
+            sender_channel: tx,
             timer: Instant::now(),
             state: MainMenu,
-            monitor,
+            monitor: monitor,
             main_menu_img,
             drag: MouseDragHandler::default(),
             monitor_preview: None,
             crop: None,
             keys,
             changing_keys: None,
-            ip_address:  String::new()
+            ip_address: String::new()
         }
     }
 
-    // Funzione per avviare il thread di ricezione video
-    fn start_video_receiver(&mut self, ctx: & egui::Context) {
-        let (tx, rx) = mpsc::channel::<ColorImage>(); // Canale per inviare le immagini
-
-        //il receiver sarà uno cioè l'ui
-        self.receiver_channel = Some(rx);
-        //avrò più sender quanti sono i client che vogliono connettersi al server di streaming
-        //ogni client manderà un'immagine al canale per l'ui
-        let txc=tx.clone();
-        //let colorImage = Arc::new(Mutex::new(self));
-        //
-        // let app = colorImage.clone();
-        // Cloniamo MyApp e lo condividiamo con il thread
-        // Avvia un thread di ricezione video
-        let  ipaddr= self.ip_address.clone();
-        println!("L'indirizzo Ip inserito è:{}", ipaddr);
-        thread::spawn(move||{
-            // Otteniamo una copia di Arc<Mutex<MyApp>>
-            // let  appl = app.lock().unwrap();
-            // Blocchiamo il Mutex per ottenere un riferimento sicuro
-            if let Err(e) = receiver::start_receiver(txc, ipaddr) {
-                eprintln!("Errore durante la ricezione del video: {}", e);
-            }
-        });
-
-
-        // Crea la texture per visualizzare l'immagine ricevuta
-        self.texture = Some(ctx.load_texture(
-            "video_frame",
-            ColorImage::new([1, 1], Default::default()), // Immagine iniziale vuota
-            Default::default(),
-        ));
-    }
 
     // Funzione per aggiornare l'interfaccia utente con il video ricevuto
     pub fn update_video_texture(&mut self, ctx: &egui::Context) {
@@ -199,8 +177,6 @@ impl MyApp {
         }
     }
 }
-
-
 impl App for MyApp {
 
     //application main loop
@@ -245,9 +221,9 @@ impl App for MyApp {
             Receiver=>{
                 receiver_ui(ctx,self);
             }
-            State::Connetion=>{
+            State::Connection=>{
 
-                connetion_ui(ctx,self);
+                connection_ui(ctx,self);
 
             }
             MonitorSelection => {
@@ -268,7 +244,7 @@ impl App for MyApp {
                         screenshots = v.clone();
                     }
                 }
-                monitor_selection_ui(ctx, self, screenshots);
+                // monitor_selection_ui(ctx, self, screenshots);
             }
 
 
@@ -311,4 +287,8 @@ impl App for MyApp {
             }
         );
     }
+
+
+
+
 }

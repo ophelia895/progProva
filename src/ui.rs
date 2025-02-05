@@ -1,5 +1,7 @@
 pub mod ui {
-    use crate::streaming::streaming::start_streaming;
+
+    use crate::receiver::start_video_receiver;
+use egui::TextureHandle;
     use eframe::epaint::textures::TextureOptions;
     use egui::{Button, Color32, ColorImage, Context, Image, ImageButton, Key, Pos2, Rect, Rounding, Stroke};
     use egui::load::SizedTexture;
@@ -10,6 +12,9 @@ pub mod ui {
 
     const TOP_PANEL_HEIGHT: f32 = 40.0;
     const SIDE_PANEL_WIDTH: f32 = 85.0;
+    use gstreamer_app::{gst, AppSink, AppSinkCallbacks};
+    use gstreamer::prelude::*;
+    use crate::streaming::start_server;
 
     pub fn main_menu_ui(ctx: &Context, app: &mut MyApp) {
         egui::TopBottomPanel::top("title")
@@ -28,7 +33,7 @@ pub mod ui {
                 let visual = ui.visuals_mut();
                 visual.widgets.active.weak_bg_fill = Color32::LIGHT_GREEN;
                 if ui.add(Button::new("SENDER")).clicked() {
-                    app.state = State::MonitorSelection;
+                    app.state = State::Sending;
                 };
                 ui.add_space(8.0);
 
@@ -81,7 +86,7 @@ pub mod ui {
                 ui.add_space(8.0);
                 ui.visuals_mut().widgets.active.weak_bg_fill = Color32::RED;
                 if ui.add(Button::new("BACK")).clicked() {
-                    app.state = State::MonitorSelection;
+                    //app.state = State::MonitorSelection;
                 }
                 ui.add_space(8.0);
                 if ui.add(Button::new("MAIN MENU")).clicked() {
@@ -89,102 +94,15 @@ pub mod ui {
                 }
             });
 
-        start_streaming(ctx,app);
-
+        //start_streaming(ctx,app);
+        start_server();
         video_ui(ctx, app);
     }
 
-    pub fn receiver_ui(ctx: &Context, app: &mut MyApp){
 
-        egui::TopBottomPanel::top("title")
-            .exact_height(TOP_PANEL_HEIGHT*2.0)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                ui.heading("ESTABILISH CONNECTION");
-                ui.add_space(4.0);
-                ui.heading("Specify the address of the caster it should connect to.");
-            });
-
-        egui::SidePanel::left("buttons")
-            .exact_width(SIDE_PANEL_WIDTH)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                ui.visuals_mut().widgets.active.weak_bg_fill = Color32::YELLOW;
-                ui.add_space(8.0);
-                if ui.add(Button::new("MAIN MENU")).clicked() {
-                    app.state = MainMenu;
-                }
-            });
-
-        //video_ui(ctx, app);
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.add_space(16.0);
-
-                // Mostra il titolo sopra i campi
-                ui.label("Enter IP Address:");
-
-                // Dividi l'indirizzo IP in 4 blocchi
-                let mut parts = app
-                    .ip_address
-                    .split('.')
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>();
-                while parts.len() < 4 {
-                    parts.push(String::new()); // Assicurati di avere sempre 4 parti
-                }
-
-                // Crea i campi di testo con validazione
-                for (i, part) in parts.iter_mut().enumerate() {
-                    // Campo di input per il blocco corrente
-                    let response = ui.add(
-                        egui::TextEdit::singleline(part)
-                            .hint_text("0-255")
-                            .desired_width(30.0),
-                    );
-
-                    // Limita l'input a 3 caratteri numerici
-                    if response.changed() {
-                        *part = part
-                            .chars()
-                            .filter(|c| c.is_digit(10))
-                            .take(3)
-                            .collect();
-
-                        // Controlla che il valore sia tra 0 e 255
-                        if let Ok(num) = part.parse::<u8>() {
-                            if num > 255 {
-                                *part = "255".to_string();
-                            }
-                        }
-                    }
-
-                    // Aggiungi un punto dopo ogni campo tranne l'ultimo
-                    if i < 3 {
-                        ui.label(".");
-                    }
-                }
-
-                // Aggiorna `ip_address` con le nuove parti
-                app.ip_address = parts.join(".");
-
-                // Bottone per confermare
-                if ui.add(Button::new("Connect")).clicked() {
-                    println!("Connecting to IP: {}", app.ip_address);
-                    // Logica per la connessione
-                    app.state = State::Connetion;
-
-                }
-            });
-        });
+    pub fn connection_ui(ctx: &Context, app: &mut MyApp){
 
 
-    }
-
-    pub fn connetion_ui(ctx: &Context, app: &mut MyApp){
 
         egui::TopBottomPanel::top("title")
             .exact_height(TOP_PANEL_HEIGHT)
@@ -205,62 +123,113 @@ pub mod ui {
                     app.state = State::Receiver;
                 }
             });
+        // Avvia la ricezione video se non è già stata avviata
+        if !app.video_receiver_started {
+            app.video_receiver_started = true;
 
-        //video_ui(ctx, app);
-       // start_receiver(app);
-       // app.start_video_receiver(ctx);
-        //----
-        //nel main:
-        app.start_video_receiver(ctx);
+            let sender_clone = app.sender_channel.clone(); // Clona il sender
+            if let Err(e) = start_video_receiver(ctx.clone(), sender_clone) {
+                eprintln!("Errore nell'avvio della ricezione video: {:?}", e);
+            }
+        }
+
+        // Visualizza il video
+        rece_ui(ctx,app);
+
 
     }
-    pub fn monitor_selection_ui(ctx: &Context, app: &mut MyApp, screenshots: Vec<ColorImage>) {
-        egui::TopBottomPanel::top("title")
-            .exact_height(TOP_PANEL_HEIGHT * 2.0)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                ui.heading("MONITOR SELECTION");
-                ui.add_space(4.0);
-                ui.heading("click the monitor you want to show")
-            });
-
-        egui::SidePanel::left("buttons")
-            .exact_width(SIDE_PANEL_WIDTH * 0.8)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                let visual = ui.visuals_mut();
-                visual.widgets.active.weak_bg_fill = Color32::RED;
-                if ui.add(Button::new("MAIN MENU")).clicked() {
-                    app.state = MainMenu;
-                }
-            });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal_centered(|ui| {
-                let n: f32 = get_monitors().len() as f32;
-                let available = ui.available_size();
-
-                let mut cnt = 0;
-                for s in screenshots {
-                    let texture = ctx.load_texture(format!("{}", cnt), s, TextureOptions::LINEAR);
-                    let tex_size = texture.size();
-                    let tex_size_f32 = (tex_size[0] as f32, tex_size[1] as f32);
-                    let scale_x = available[0] / tex_size_f32.0;
-                    let scale_y = available[1] / tex_size_f32.1;
-                    let scale = scale_x.min(scale_y);
-                    let scaled_size = (tex_size_f32.0 * scale / n, tex_size_f32.1 * scale / n);
-                    if ui.add(ImageButton::new(SizedTexture::new(texture.id(), scaled_size))).clicked() {
-                        app.monitor = get_monitors().into_iter().nth(cnt).unwrap();
-                        app.state = Sending;
-                    };
-                    cnt += 1;
-                }
-            })
-        });
+    pub fn update_video_texture(ctx: &Context, app: &mut MyApp) {
+        if let Some(receiver) = &app.receiver_channel {
+            while let Ok(image) = receiver.try_recv() {
+                let texture = ctx.load_texture(
+                    "video_frame_texture",
+                    image.clone(),
+                    egui::TextureOptions::LINEAR,
+                );
+                app.texture = Some(texture);
+            }
+        }
     }
 
+
+
+
+
+    fn create_texture_from_image(ctx: &egui::Context, image: &ColorImage) -> TextureHandle {
+        // I dati dei pixel sono già in formato `Color32`, quindi possiamo passarli direttamente.
+        let bytes = image.pixels.iter().flat_map(|color| color.to_array()).collect::<Vec<u8>>();
+
+        // Crea la texture direttamente con opzioni di filtro
+        let options = egui::TextureOptions {
+            magnification: egui::TextureFilter::Linear,  // Imposta il filtro di ingrandimento
+            minification: egui::TextureFilter::Linear,   // Imposta il filtro di riduzione
+            ..Default::default() // Usa le opzioni di default per gli altri campi
+        };
+
+        ctx.load_texture(
+            "video_frame_texture",  // Nome della texture
+            egui::ColorImage {
+                size: image.size,
+                pixels: image.pixels.clone(),
+            },
+            options,  // Passa le opzioni di texture
+        )
+    }
+
+    pub fn rece_ui(ctx: &egui::Context, app: &mut MyApp) {
+        // Assicurati che app.texture sia aggiornato con l'immagine ricevuta
+        update_video_texture(ctx,app);
+
+        // Visualizza il video
+        video_ui(ctx, app);
+    }
+    /*  pub fn monitor_selection_ui(ctx: &Context, app: &mut MyApp, screenshots: Vec<ColorImage>) {
+          egui::TopBottomPanel::top("title")
+              .exact_height(TOP_PANEL_HEIGHT * 2.0)
+              .resizable(false)
+              .show(ctx, |ui| {
+                  ui.add_space(8.0);
+                  ui.heading("MONITOR SELECTION");
+                  ui.add_space(4.0);
+                  ui.heading("click the monitor you want to show")
+              });
+
+          egui::SidePanel::left("buttons")
+              .exact_width(SIDE_PANEL_WIDTH * 0.8)
+              .resizable(false)
+              .show(ctx, |ui| {
+                  ui.add_space(8.0);
+                  let visual = ui.visuals_mut();
+                  visual.widgets.active.weak_bg_fill = Color32::RED;
+                  if ui.add(Button::new("MAIN MENU")).clicked() {
+                      app.state = MainMenu;
+                  }
+              });
+
+          egui::CentralPanel::default().show(ctx, |ui| {
+              ui.horizontal_centered(|ui| {
+                  let n: f32 = get_monitors().len() as f32;
+                  let available = ui.available_size();
+
+                  let mut cnt = 0;
+                  for s in screenshots {
+                      let texture = ctx.load_texture(format!("{}", cnt), s, TextureOptions::LINEAR);
+                      let tex_size = texture.size();
+                      let tex_size_f32 = (tex_size[0] as f32, tex_size[1] as f32);
+                      let scale_x = available[0] / tex_size_f32.0;
+                      let scale_y = available[1] / tex_size_f32.1;
+                      let scale = scale_x.min(scale_y);
+                      let scaled_size = (tex_size_f32.0 * scale / n, tex_size_f32.1 * scale / n);
+                      if ui.add(ImageButton::new(SizedTexture::new(texture.id(), scaled_size))).clicked() {
+                          app.monitor = get_monitors().into_iter().nth(cnt).unwrap();
+                          app.state = Sending;
+                      };
+                      cnt += 1;
+                  }
+              })
+          });
+      }
+  */
     pub fn portion_selection_ui(ctx: &Context, app: &mut MyApp) {
         egui::TopBottomPanel::top("title")
             .exact_height(TOP_PANEL_HEIGHT * 1.8)
@@ -444,22 +413,102 @@ pub mod ui {
     }
 
 
+    pub fn receiver_ui(ctx: &Context, app: &mut MyApp) {
+        egui::TopBottomPanel::top("title")
+            .exact_height(TOP_PANEL_HEIGHT * 2.0)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                ui.heading("ESTABLISH CONNECTION");
+                ui.add_space(4.0);
+                ui.heading("Specify the address of the caster it should connect to.");
+            });
+
+        egui::SidePanel::left("buttons")
+            .exact_width(SIDE_PANEL_WIDTH)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                ui.visuals_mut().widgets.active.weak_bg_fill = Color32::YELLOW;
+                ui.add_space(8.0);
+                if ui.add(Button::new("MAIN MENU")).clicked() {
+                    app.state = MainMenu;
+                }
+            });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.add_space(16.0);
+                ui.label("Enter IP Address:");
+
+                let mut parts = app.ip_address.split('.').map(|s| s.to_string()).collect::<Vec<String>>();
+                while parts.len() < 4 {
+                    parts.push(String::new());
+                }
+
+                for (i, part) in parts.iter_mut().enumerate() {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(part)
+                            .hint_text("0-255")
+                            .desired_width(30.0),
+                    );
+
+                    if response.changed() {
+                        *part = part.chars().filter(|c| c.is_digit(10)).take(3).collect();
+                        if let Ok(num) = part.parse::<u8>() {
+                            if num > 255 {
+                                *part = "255".to_string();
+                            }
+                        }
+                    }
+
+                    if i < 3 {
+                        ui.label(".");
+                    }
+                }
+
+                app.ip_address = parts.join(".");
+
+                if ui.add(Button::new("Connect")).clicked() {
+                    println!("Connecting to IP: {}", app.ip_address);
+
+                    // Avvia il ricevitore video
+                    if !app.video_receiver_started {
+                        app.video_receiver_started = true;
+
+                        let sender_clone = app.sender_channel.clone();
+                        if let Err(e) = start_video_receiver(ctx.clone(), sender_clone) {
+                            eprintln!("Errore nell'avvio della ricezione video: {:?}", e);
+                        }
+                    }
+
+                    app.state = State::Connection; // Passa allo stato di ricezione del video
+                }
+            });
+        });
+
+        // Assicurati che il video venga aggiornato
+        update_video_texture(ctx, app);
+
+    }
+
     pub fn video_ui(ctx: &Context, app: &mut MyApp) {
+        update_video_texture(ctx, app); // Aggiorna la texture prima di disegnarla
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.centered_and_justified(|ui| {
                 if let Some(texture) = &app.texture {
                     let tex_size = texture.size();
-                    let tex_size_f32 = (tex_size[0] as f32, tex_size[1] as f32);
                     let available = ui.available_size();
-
-                    let scale_x = available[0] / tex_size_f32.0;
-                    let scale_y = available[1] / tex_size_f32.1;
-
+                    let scale_x = available[0] / tex_size[0] as f32;
+                    let scale_y = available[1] / tex_size[1] as f32;
                     let scale = scale_x.min(scale_y);
-                    let scaled_size = (tex_size_f32.0 * scale, tex_size_f32.1 * scale);
+                    let scaled_size = (tex_size[0] as f32 * scale, tex_size[1] as f32 * scale);
 
                     ui.add_sized(scaled_size, Image::from_texture(
                         SizedTexture::new(texture.id(), scaled_size)));
+                } else {
+                    ui.label("Nessun video ricevuto...");
                 }
             });
         });
@@ -467,4 +516,6 @@ pub mod ui {
 
 
 
+
 }
+

@@ -1,140 +1,103 @@
-use std::error::Error;
+use gstreamer::prelude::*;
+use gstreamer_app::{AppSink, AppSinkCallbacks};
+use gstreamer_video::{VideoFrame, VideoInfo};
+use eframe::egui::{ColorImage, Color32};
 use std::sync::mpsc;
 use gstreamer as gst;
-use gstreamer::prelude::*;
-use gstreamer::glib;
-use egui::ColorImage;
-use eframe::epaint::Color32;
+use gstreamer_video as gst_video;
 
-use crate::MyApp;
-
-pub fn start_receiver(tx: mpsc::Sender<ColorImage>, ipaddr: String) -> Result<(), Box<dyn Error>> {
-    // Inizializzazione di GStreamer
+pub fn start_video_receiver(ctx: egui::Context, sender: mpsc::Sender<ColorImage>) -> Result<(), Box<dyn std::error::Error>> {
+    // Inizializza GStreamer
     gst::init()?;
 
-    // Creazione dell'indirizzo completo del server
-    let server_address = format!("{}:50496", ipaddr);
-    println!("In ascolto su {}", server_address);
+    // Utilizza una pipeline ottimizzata con meno buffering
+    let pipeline = gst::parse_launch(
+        "udpsrc port=5000 caps=\"application/x-rtp,media=video,encoding-name=H264,payload=96\" \
+        ! rtph264depay ! decodebin ! videoconvert ! videoscale ! video/x-raw,format=RGB,width=640,height=360 \
+        ! appsink name=videosink"
+    )?;
 
-    // Creazione della pipeline GStreamer
-    let pipeline = gst::Pipeline::new(None);
+    let pipeline = pipeline
+        .downcast::<gst::Pipeline>()
+        .map_err(|_| "Failed to downcast pipeline to gst::Pipeline")?;
 
-    // Elementi della pipeline
-    let src = gst::ElementFactory::make("udpsrc")
-        .name("src")
-        .build()
-        .expect("Elemento 'udpsrc' non trovato");
-    src.set_property("port", &50496i32);
+    let appsink = pipeline.by_name("videosink")
+        .ok_or("Cannot find appsink element")?
+        .downcast::<AppSink>()
+        .map_err(|_| "Cannot cast element to AppSink")?;
 
-    let rtp_depay = gst::ElementFactory::make("rtph264depay")
-        .build()
-        .expect("Elemento 'rtph264depay' non trovato");
+    let sender_clone = sender.clone();
 
-    let capsfilter_rtp = gst::ElementFactory::make("capsfilter")
-        .name("capsfilter_rtp")
-        .build()
-        .expect("Elemento 'capsfilter_rtp' non trovato");
+    appsink.set_callbacks(
+        AppSinkCallbacks::builder()
+            .new_sample(move |sink| {
+                // Preleva il sample
+                let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
+                let buffer_ref = sample.buffer().ok_or(gst::FlowError::Error)?;
 
-    let caps_rtp = gst::Caps::builder("application/x-rtp")
-        .field("media", &"video")
-        .field("encoding-name", &"H264")
-        .field("payload", &96) // Deve corrispondere al payload type del sender
-        .build();
-    capsfilter_rtp.set_property("caps", &caps_rtp);
+                // Ottieni i caps dal sample e crea il VideoInfo
+                let caps = sample.caps().ok_or(gst::FlowError::Error)?;
+                let info = VideoInfo::from_caps(&caps).map_err(|_| gst::FlowError::Error)?;
 
-    let decoder = gst::ElementFactory::make("avdec_h264")
-        .build()
-        .expect("Elemento 'avdec_h264' non trovato");
+                // Copia il buffer per ottenere un buffer "owned"
+                let owned_buffer = buffer_ref.copy();
+                let video_frame = VideoFrame::from_buffer_readable(owned_buffer, &info)
+                    .map_err(|_| gst::FlowError::Error)?;
 
-    let videoconvert = gst::ElementFactory::make("videoconvert")
-        .build()
-        .expect("Elemento 'videoconvert' non trovato");
+                let width = info.width() as usize;
+                let height = info.height() as usize;
 
-    let appsink = gst::ElementFactory::make("appsink")
-        .name("appsink")
-        .build()
-        .expect("Elemento 'appsink' non trovato");
-    appsink.set_property("emit-signals", &true);
-    appsink.set_property("sync", &false);
+                // Determina i byte per pixel in base al formato:
+                let format = info.format();
+                let bytes_per_pixel = match format {
+                    gst_video::VideoFormat::Rgb => 3,
+                    gst_video::VideoFormat::Rgb => 4,
+                    _ => 3,
+                };
 
-    // Aggiunta degli elementi alla pipeline
-    pipeline.add_many(&[&src, &capsfilter_rtp,&rtp_depay, &decoder, &videoconvert, &appsink])?;
+                // Ottieni i dati del primo piano e lo stride
+                let plane = video_frame.plane_data(0).map_err(|_| gst::FlowError::Error)?;
+                let stride = video_frame.plane_stride()[0] as usize;
 
-    // Collegamento degli elementi
-    gst::Element::link_many(&[&src,&capsfilter_rtp, &rtp_depay, &decoder, &videoconvert, &appsink])?;
+                // Prepara il vettore di pixel: ogni pixel sarà un Color32
+                let mut pixels = Vec::with_capacity(width * height);
 
-    gst::debug_bin_to_dot_file_with_ts(
-        &pipeline,
-        gst::DebugGraphDetails::ALL,
-        "receiver-pipeline",
-    );
-
-    // Gestione del segnale "new-sample" di appsink
-    let appsink_clone = appsink.clone();
-    appsink.connect("new-sample", false, move |_| {
-        // Estrazione del sample
-        if let Some(sample) = appsink_clone.property::<Option<gst::Sample>>("last-sample") {
-            if let Some(buffer_ref) = sample.buffer() {
-                // Decodifica del buffer in immagine
-                if let Ok(image) = decode_buffer_to_color_image(buffer_ref) {
-                    if let Err(e) = tx.send(image) {
-                        eprintln!("Errore nell'invio dell'immagine: {}", e);
+                // Itera su ogni riga
+                for row in 0..height {
+                    let start = row * stride;
+                    // Leggi esattamente width * bytes_per_pixel byte per la riga
+                    let row_slice = &plane[start..start + width * bytes_per_pixel];
+                    if bytes_per_pixel == 3 {
+                        // Se il formato è RGB, usa i 3 byte nell'ordine (R, G, B)
+                        for chunk in row_slice.chunks_exact(3) {
+                            pixels.push(Color32::from_rgb(chunk[0], chunk[1], chunk[2]));
+                        }
+                    } else if bytes_per_pixel == 4 {
+                        // Se il formato è RGBA, ignora il canale alpha
+                        for chunk in row_slice.chunks_exact(4) {
+                            pixels.push(Color32::from_rgb(chunk[0], chunk[1], chunk[2]));
+                        }
                     }
                 }
-            }
-        }
-        // Restituisci gst::FlowReturn::Ok
-        Some(glib::Value::from(gst::FlowReturn::Ok))
-    });
 
+                // Crea il ColorImage
+                let image = ColorImage {
+                    size: [width, height],
+                    pixels,
+                };
 
+                // Invia l'immagine al thread principale e richiedi il repaint dell'UI
+                if sender_clone.send(image).is_ok() {
+                    ctx.request_repaint();
+                }
 
+                Ok(gst::FlowSuccess::Ok)
+            })
+            .build()
+    );
 
-    // Avvio della pipeline
-    match pipeline.set_state(gst::State::Playing) {
-        Ok(gst::StateChangeSuccess::Success) => println!("Pipeline avviata con successo."),
-        Ok(_) => println!("Pipeline in uno stato non definitivo."),
-        Err(err) => {
-            eprintln!("Errore nell'avvio della pipeline: {}", err);
-            return Err("Errore nel cambio di stato".into());
-        }
-    }
+    pipeline.set_state(gst::State::Playing)?;
 
-    // Mantieni la pipeline attiva
-    let bus = pipeline.bus().unwrap();
-    for msg in bus.iter_timed(gst::ClockTime::NONE) {
-        use gst::MessageView;
-        match msg.view() {
-            MessageView::Eos(..) => {
-                println!("Fine dello streaming.");
-                break;
-            }
-            MessageView::Error(err) => {
-                eprintln!("Errore nella pipeline: {}", err.error());
-                break;
-            }
-            _ => (),
-        }
-    }
-
-    // Arresto della pipeline
-    pipeline.set_state(gst::State::Null)?;
-
+    // La pipeline continua a girare in background
     Ok(())
-}
-
-// Funzione per decodificare un buffer in un'immagine ColorImage
-fn decode_buffer_to_color_image(buffer: &gst::BufferRef) -> Result<ColorImage, Box<dyn Error>> {
-    let size = buffer.size();
-    let data = buffer.map_readable()?.as_slice();
-
-    // Esempio simulato: restituisce un'immagine nera
-    let width = 640; // Simulazione: modifica in base ai tuoi dati
-    let height = 480;
-    let pixels = vec![Color32::BLACK; (width * height) as usize];
-
-    Ok(ColorImage {
-        size: [width as usize, height as usize],
-        pixels,
-    })
 }
