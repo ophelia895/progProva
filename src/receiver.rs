@@ -11,11 +11,21 @@ pub fn start_video_receiver(ctx: egui::Context, sender: mpsc::Sender<ColorImage>
     gst::init()?;
 
     // Utilizza una pipeline ottimizzata con meno buffering
-    let pipeline = gst::parse_launch(
+  /*  let pipeline = gst::parse_launch(
         "udpsrc port=5000 caps=\"application/x-rtp,media=video,encoding-name=H264,payload=96\" \
         ! rtph264depay ! decodebin ! videoconvert ! videoscale ! video/x-raw,format=RGB,width=640,height=360 \
         ! appsink name=videosink"
     )?;
+*/
+    let ip="192.168.216.246";
+    // Crea la pipeline utilizzando il parametro ip per il bind della sorgente UDP
+    let pipeline_str = format!(
+        "udpsrc address={} port=5000 caps=\"application/x-rtp,media=video,encoding-name=H264,payload=96\" \
+         ! rtph264depay ! decodebin ! videoconvert ! videoscale ! video/x-raw,format=RGB,width=640,height=360 \
+         ! appsink name=videosink",
+        ip
+    );
+    let pipeline = gst::parse_launch(&pipeline_str)?;
 
     let pipeline = pipeline
         .downcast::<gst::Pipeline>()
